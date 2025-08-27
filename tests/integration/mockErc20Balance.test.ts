@@ -1,34 +1,37 @@
 // mock the balance of an address for an ERC20 token, and then use eth_call to get the balance by passing in the stateDiff to override the storage
 
-import { ethers } from "ethers";
+import { createPublicClient, http, type Address, encodeAbiParameters, encodeFunctionData, decodeFunctionResult, parseAbiItem, getAddress, toHex } from "viem";
 import { generateMockBalanceData, getErc20Balance } from "../../src";
+import { base, mainnet } from "viem/chains";
 
 describe("mockErc20Balance", () => {
-  const baseProvider = new ethers.providers.JsonRpcProvider(
-    process.env.BASE_RPC_URL ?? "https://localhost:8545"
-  );
+  const baseClient = createPublicClient({
+    chain: base,
+    transport: http(process.env.BASE_RPC_URL ?? "https://localhost:8545")
+  });
 
-  const ethProvider = new ethers.providers.JsonRpcProvider(
-    process.env.ETH_RPC_URL ?? "https://localhost:8545"
-  );
+  const ethClient = createPublicClient({
+    chain: mainnet,
+    transport: http(process.env.ETH_RPC_URL ?? "https://localhost:8545")
+  });
 
-  const mockAddress = ethers.Wallet.createRandom().address;
+  const mockAddress = getAddress(`0x${Math.random().toString(16).slice(2, 42).padEnd(40, '0')}`);
 
   it("[solidity] should mock the balance of an address for an ERC20 token", async () => {
-    const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-    const holderAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
+    const tokenAddress: Address = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    const holderAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
     const mockBalanceAmount = "9600000";
     const maxSlots = 100;
 
     // get balance of mockAddress before, to make sure its 0 before we mock it
     const balanceBefore = await getErc20Balance(
-      baseProvider,
+      baseClient,
       tokenAddress,
       mockAddress
     );
     expect(balanceBefore.toString()).toBe("0");
 
-    const data = await generateMockBalanceData(baseProvider, {
+    const data = await generateMockBalanceData(baseClient, {
       tokenAddress,
       holderAddress,
       mockAddress,
@@ -46,52 +49,51 @@ describe("mockErc20Balance", () => {
     };
 
     // Function selector for balanceOf(address)
-    const balanceOfSelector = "0x70a08231";
+    const balanceOfCalldata = encodeFunctionData({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      args: [mockAddress]
+    });
 
-    // Encode the address we want to check the balance of (in this case, mockAddress)
-    const encodedAddress = ethers.utils.defaultAbiCoder
-      .encode(["address"], [mockAddress])
-      .slice(2);
+    // Use the new stateDiff to get the balance
+    const result = await baseClient.request({
+      method: 'eth_call',
+      params: [
+        {
+          to: tokenAddress,
+          data: balanceOfCalldata,
+        },
+        'latest',
+        stateDiff,
+      ],
+    });
 
-    const getBalanceCalldata = balanceOfSelector + encodedAddress;
+    // Decode the result
+    const decodedBalance = decodeFunctionResult({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      data: result
+    });
 
-    const callParams = [
-      {
-        from: mockAddress,
-        to: tokenAddress,
-        data: getBalanceCalldata,
-      },
-      "latest",
-    ];
-
-    const balanceOfResponse = await baseProvider.send("eth_call", [
-      ...callParams,
-      stateDiff,
-    ]);
-
-    // convert the response to a BigNumber
-    const balance = ethers.BigNumber.from(
-      ethers.utils.defaultAbiCoder.decode(["uint256"], balanceOfResponse)[0]
-    );
-
-    expect(balance.eq(data.balance)).toBe(true);
+    // 9600000
+    expect(decodedBalance.toString()).toBe(mockBalanceAmount);
   }, 120000);
 
   it("[vyper] should mock the balance of an address for an ERC20 token", async () => {
-    const tokenAddress = "0xD533a949740bb3306d119CC777fa900bA034cd52";
-    const holderAddress = "0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2";
-    const mockBalanceAmount = "9600000";
+    const tokenAddress: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const holderAddress: Address = "0x0A59649758aa4d66E25f08Dd01271e891fe52199";
+    const mockBalanceAmount = "99000000";
     const maxSlots = 100;
 
     // get balance of mockAddress before, to make sure its 0 before we mock it
     const balanceBefore = await getErc20Balance(
-      ethProvider,
+      ethClient,
       tokenAddress,
       mockAddress
     );
     expect(balanceBefore.toString()).toBe("0");
 
-    const data = await generateMockBalanceData(ethProvider, {
+    const data = await generateMockBalanceData(ethClient, {
       tokenAddress,
       holderAddress,
       mockAddress,
@@ -108,35 +110,100 @@ describe("mockErc20Balance", () => {
       },
     };
 
-    // Function selector for balanceOf(address)
-    const balanceOfSelector = "0x70a08231";
+    const balanceOfCalldata = encodeFunctionData({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      args: [mockAddress]
+    });
 
-    // Encode the address we want to check the balance of (in this case, mockAddress)
-    const encodedAddress = ethers.utils.defaultAbiCoder
-      .encode(["address"], [mockAddress])
-      .slice(2);
+    // Use the new stateDiff to get the balance
+    const result = await ethClient.request({
+      method: 'eth_call',
+      params: [
+        {
+          to: tokenAddress,
+          data: balanceOfCalldata,
+        },
+        'latest',
+        stateDiff,
+      ],
+    });
 
-    const getBalanceCalldata = balanceOfSelector + encodedAddress;
+    // Decode the result
+    const decodedBalance = decodeFunctionResult({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      data: result
+    });
 
-    const callParams = [
-      {
-        from: mockAddress,
-        to: tokenAddress,
-        data: getBalanceCalldata,
-      },
-      "latest",
-    ];
+    // 99000000
+    expect(decodedBalance.toString()).toBe(mockBalanceAmount);
+  }, 120000);
 
-    const balanceOfResponse = await ethProvider.send("eth_call", [
-      ...callParams,
-      stateDiff,
-    ]);
+  it("[vyper] with no specified amount should use the holder balance", async () => {
+    const tokenAddress: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const holderAddress: Address = "0x0A59649758aa4d66E25f08Dd01271e891fe52199";
+    const maxSlots = 100;
 
-    // convert the response to a BigNumber
-    const balance = ethers.BigNumber.from(
-      ethers.utils.defaultAbiCoder.decode(["uint256"], balanceOfResponse)[0]
+    // get balance of mockAddress before, to make sure its 0 before we mock it
+    const balanceBefore = await getErc20Balance(
+      ethClient,
+      tokenAddress,
+      mockAddress
+    );
+    expect(balanceBefore.toString()).toBe("0");
+
+    const holderBalance = await getErc20Balance(
+      ethClient,
+      tokenAddress,
+      holderAddress
     );
 
-    expect(balance.eq(data.balance)).toBe(true);
+    expect(holderBalance.toString()).not.toBe("0");
+
+    const data = await generateMockBalanceData(ethClient, {
+      tokenAddress,
+      holderAddress,
+      mockAddress,
+      maxSlots,
+    });
+
+    // Create the stateDiff object
+    const stateDiff = {
+      [tokenAddress]: {
+        stateDiff: {
+          [data.slot]: data.balance,
+        },
+      },
+    };
+
+    const balanceOfCalldata = encodeFunctionData({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      args: [mockAddress]
+    });
+
+    // Use the new stateDiff to get the balance
+    const result = await ethClient.request({
+      method: 'eth_call',
+      params: [
+        {
+          to: tokenAddress,
+          data: balanceOfCalldata,
+        },
+        'latest',
+        stateDiff,
+      ],
+    });
+
+    // Decode the result
+    const decodedBalance = decodeFunctionResult({
+      abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+      functionName: 'balanceOf',
+      data: result
+    });
+
+    // should be the same as the holder balance
+    expect(decodedBalance.toString()).toBe(holderBalance.toString());
   }, 120000);
 });

@@ -1,22 +1,25 @@
 import { getErc20ApprovalStorageSlot } from "../../../src";
-import { ethers } from "ethers";
+import { createPublicClient, http, type Address } from "viem";
+import { base, mainnet } from "viem/chains";
 
 describe("getErc20ApprovalStorageSlot", () => {
-  const baseProvider = new ethers.providers.JsonRpcProvider(
-    process.env.BASE_RPC_URL ?? "https://localhost:8545"
-  );
+  const baseClient = createPublicClient({
+    chain: base,
+    transport: http(process.env.BASE_RPC_URL ?? "https://localhost:8545")
+  });
 
-  const ethProvider = new ethers.providers.JsonRpcProvider(
-    process.env.ETH_RPC_URL ?? "https://localhost:8545"
-  );
+  const ethClient = createPublicClient({
+    chain: mainnet,
+    transport: http(process.env.ETH_RPC_URL ?? "https://localhost:8545")
+  });
 
   it("should return the slot for the approval", async () => {
-    const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-    const ownerAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
-    const spenderAddress = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+    const tokenAddress: Address = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    const ownerAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
+    const spenderAddress: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
     const maxSlots = 30;
     const { slot, slotHash, isVyper } = await getErc20ApprovalStorageSlot(
-      baseProvider,
+      baseClient,
       tokenAddress,
       ownerAddress,
       spenderAddress,
@@ -31,12 +34,12 @@ describe("getErc20ApprovalStorageSlot", () => {
     expect(isVyper).toBe(false);
   }, 120000);
   it("[vyper] should return the slot for the approval", async () => {
-    const tokenAddress = "0xD533a949740bb3306d119CC777fa900bA034cd52";
-    const ownerAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
-    const spenderAddress = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+    const tokenAddress: Address = "0xD533a949740bb3306d119CC777fa900bA034cd52";
+    const ownerAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
+    const spenderAddress: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
     const maxSlots = 30;
     const { slot, slotHash, isVyper } = await getErc20ApprovalStorageSlot(
-      ethProvider,
+      ethClient,
       tokenAddress,
       ownerAddress,
       spenderAddress,

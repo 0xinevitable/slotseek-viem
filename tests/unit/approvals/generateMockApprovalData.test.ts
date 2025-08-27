@@ -1,24 +1,27 @@
 import { generateMockApprovalData } from "../../../src";
-import { ethers } from "ethers";
+import { createPublicClient, http, type Address, generatePrivateKey, privateKeyToAddress } from "viem";
+import { base, mainnet } from "viem/chains";
 
 describe("generateMockApprovalData", () => {
-  const baseProvider = new ethers.providers.JsonRpcProvider(
-    process.env.BASE_RPC_URL ?? "https://localhost:8545"
-  );
-  const ethProvider = new ethers.providers.JsonRpcProvider(
-    process.env.ETH_RPC_URL ?? "https://localhost:8545"
-  );
+  const baseClient = createPublicClient({
+    chain: base,
+    transport: http(process.env.BASE_RPC_URL ?? "https://localhost:8545")
+  });
+  const ethClient = createPublicClient({
+    chain: mainnet,
+    transport: http(process.env.ETH_RPC_URL ?? "https://localhost:8545")
+  });
 
-  const mockAddress = ethers.Wallet.createRandom().address;
+  const mockAddress: Address = privateKeyToAddress(generatePrivateKey());
 
   it("should generate mock approval data", async () => {
-    const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-    const ownerAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
-    const spenderAddress = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+    const tokenAddress: Address = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    const ownerAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
+    const spenderAddress: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
     const mockApprovalAmount = "1000000";
     const maxSlots = 30;
 
-    const data = await generateMockApprovalData(baseProvider, {
+    const data = await generateMockApprovalData(baseClient, {
       tokenAddress,
       ownerAddress,
       spenderAddress,
@@ -33,14 +36,14 @@ describe("generateMockApprovalData", () => {
   }, 120000);
 
   it("[vyper] should generate mock approval data", async () => {
-    const tokenAddress = "0xD533a949740bb3306d119CC777fa900bA034cd52";
-    const ownerAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
-    const spenderAddress = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-    const mockAddress = ethers.Wallet.createRandom().address;
+    const tokenAddress: Address = "0xD533a949740bb3306d119CC777fa900bA034cd52";
+    const ownerAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
+    const spenderAddress: Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+    const mockAddress: Address = privateKeyToAddress(generatePrivateKey());
     const mockApprovalAmount = "1000000";
     const maxSlots = 30;
 
-    const data = await generateMockApprovalData(ethProvider, {
+    const data = await generateMockApprovalData(ethClient, {
       tokenAddress,
       ownerAddress,
       spenderAddress,

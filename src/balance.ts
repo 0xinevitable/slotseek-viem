@@ -1,9 +1,21 @@
-import { ethers } from "ethers";
+import { 
+  type Address, 
+  type PublicClient, 
+  type Hex,
+  encodeAbiParameters,
+  keccak256,
+  parseAbiItem,
+  toHex,
+  pad,
+  hexToBigInt,
+  encodePacked
+} from "viem";
 import { balanceCache } from "./cache";
+import type { ViemPublicClient } from "./types";
 
 /**
  * Generate mock data for a given ERC20 token balance
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param tokenAddress - The address of the ERC20 token
  * @param holderAddress - The address of the holder, used to find the balance slot
  * @param mockAddress - The user address to mock the balance for
@@ -13,7 +25,7 @@ import { balanceCache } from "./cache";
  *
  */
 export const generateMockBalanceData = async (
-  provider: ethers.providers.JsonRpcProvider,
+  client: ViemPublicClient,
   {
     tokenAddress,
     holderAddress,
@@ -21,48 +33,46 @@ export const generateMockBalanceData = async (
     mockBalanceAmount,
     maxSlots = 30,
   }: {
-    tokenAddress: string;
-    holderAddress: string;
-    mockAddress: string;
+    tokenAddress: Address;
+    holderAddress: Address;
+    mockAddress: Address;
     mockBalanceAmount?: string;
     maxSlots?: number;
   }
 ): Promise<{
-  slot: string;
-  balance: string;
+  slot: Hex;
+  balance: Hex;
   isVyper: boolean;
 }> => {
   // get the slot for token balance mapping: mapping(address => uint256)
   const { slot, balance, isVyper } = await getErc20BalanceStorageSlot(
-    provider,
+    client,
     tokenAddress,
     holderAddress,
     maxSlots
   );
 
   // make sure its padded to 32 bytes, and convert to a BigNumber
-  const mockBalanceHex = ethers.utils.hexZeroPad(
-    ethers.utils.hexlify(
-      mockBalanceAmount ? ethers.BigNumber.from(mockBalanceAmount) : balance
-    ),
-    32
+  const mockBalanceHex = pad(
+    toHex(mockBalanceAmount ? BigInt(mockBalanceAmount) : balance),
+    { size: 32 }
   );
 
   // Calculate the storage slot key
-  let index;
+  let index: Hex;
   if (!isVyper) {
-    index = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["address", "uint256"],
-        [mockAddress, slot]
+    index = keccak256(
+      encodeAbiParameters(
+        [{ type: "address" }, { type: "uint256" }],
+        [mockAddress, hexToBigInt(slot)]
       )
     );
   } else {
     // if vyper, we need to use the keccak256(abi.encode(slot, address(this))) instead of keccak256(abi.encode(address(this), slot))
-    index = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["uint256", "address"],
-        [slot, mockAddress]
+    index = keccak256(
+      encodeAbiParameters(
+        [{ type: "uint256" }, { type: "address" }],
+        [hexToBigInt(slot), mockAddress]
       )
     );
   }
@@ -76,7 +86,7 @@ export const generateMockBalanceData = async (
 
 /**
  * Get the storage slot for a given ERC20 token balance
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param erc20Address - The address of the ERC20 token
  * @param holderAddress - The address of the holder, used to find the balance slot
  * @param maxSlots - The maximum number of slots to search
@@ -85,13 +95,13 @@ export const generateMockBalanceData = async (
  * - This uses a brute force approach to find the storage slot for the balance of the holder, so we can mock it. There are better ways to do this outside of just interacting directly with the contract over RPC, but its difficult to do so without needing to setup more tools/infra, especially for multi chain supoprt and gas estimation at runtime.
  */
 export const getErc20BalanceStorageSlot = async (
-  provider: ethers.providers.JsonRpcProvider,
-  erc20Address: string,
-  holderAddress: string,
+  client: ViemPublicClient,
+  erc20Address: Address,
+  holderAddress: Address,
   maxSlots = 30
 ): Promise<{
-  slot: string;
-  balance: ethers.BigNumber;
+  slot: Hex;
+  balance: bigint;
   isVyper: boolean;
 }> => {
   // check the cache
@@ -99,21 +109,24 @@ export const getErc20BalanceStorageSlot = async (
   if (cachedValue) {
     if (cachedValue.isVyper) {
       const { vyperSlotHash } = calculateBalanceVyperStorageSlot(holderAddress, cachedValue.slot)
-      const vyperBalance = await provider.getStorageAt(
-        erc20Address,
-        vyperSlotHash
-      );
+      const vyperBalance = await client.getStorageAt({
+        address: erc20Address,
+        slot: vyperSlotHash
+      });
       return {
-        slot: ethers.BigNumber.from(cachedValue.slot).toHexString(),
-        balance: ethers.BigNumber.from(vyperBalance),
+        slot: toHex(cachedValue.slot),
+        balance: hexToBigInt(vyperBalance!),
         isVyper: true,
       };
     } else {
       const { slotHash } = calculateBalanceSolidityStorageSlot(holderAddress, cachedValue.slot);
-      const balance = await provider.getStorageAt(erc20Address, slotHash);
+      const balance = await client.getStorageAt({
+        address: erc20Address,
+        slot: slotHash
+      });
       return {
-        slot: ethers.BigNumber.from(cachedValue.slot).toHexString(),
-        balance: ethers.BigNumber.from(balance),
+        slot: toHex(cachedValue.slot),
+        balance: hexToBigInt(balance!),
         isVyper: false,
       }
     }
@@ -121,12 +134,12 @@ export const getErc20BalanceStorageSlot = async (
 
   // Get the balance of the holder, that we can use to find the slot
   const userBalance = await getErc20Balance(
-    provider,
+    client,
     erc20Address,
     holderAddress
   );
   // If the balance is 0, we can't find the slot, so throw an error
-  if (userBalance.eq(0)) {
+  if (userBalance === 0n) {
     throw new Error("User has no balance");
   }
   // We iterate over maxSlots, maxSlots is set to 100 by default, its unlikely that an erc20 token will be using up more than 100 slots tbh
@@ -134,9 +147,12 @@ export const getErc20BalanceStorageSlot = async (
   // If the value at the storage slot is equal to the balance, return the slot as we have found the correct slot for balances
   for (let i = 0; i < maxSlots; i++) {
     const { slotHash } = calculateBalanceSolidityStorageSlot(holderAddress, i);
-    const balance = await provider.getStorageAt(erc20Address, slotHash);
+    const balance = await client.getStorageAt({
+      address: erc20Address,
+      slot: slotHash
+    });
 
-    if (ethers.BigNumber.from(balance).eq(userBalance)) {
+    if (hexToBigInt(balance!) === userBalance) {
       balanceCache.set(erc20Address.toLowerCase(), {
         slot: i,
         isVyper: false,
@@ -144,19 +160,19 @@ export const getErc20BalanceStorageSlot = async (
       })
 
       return {
-        slot: ethers.BigNumber.from(i).toHexString(),
-        balance: ethers.BigNumber.from(balance),
+        slot: toHex(i),
+        balance: hexToBigInt(balance!),
         isVyper: false,
       };
     }
 
     const { vyperSlotHash } = calculateBalanceVyperStorageSlot(holderAddress, i)
-    const vyperBalance = await provider.getStorageAt(
-      erc20Address,
-      vyperSlotHash
-    );
+    const vyperBalance = await client.getStorageAt({
+      address: erc20Address,
+      slot: vyperSlotHash
+    });
 
-    if (ethers.BigNumber.from(vyperBalance).eq(userBalance)) {
+    if (hexToBigInt(vyperBalance!) === userBalance) {
       balanceCache.set(erc20Address.toLowerCase(), {
         slot: i,
         isVyper: true,
@@ -164,8 +180,8 @@ export const getErc20BalanceStorageSlot = async (
       })
 
       return {
-        slot: ethers.BigNumber.from(i).toHexString(),
-        balance: ethers.BigNumber.from(vyperBalance),
+        slot: toHex(i),
+        balance: hexToBigInt(vyperBalance!),
         isVyper: true,
       };
     }
@@ -174,20 +190,22 @@ export const getErc20BalanceStorageSlot = async (
 };
 
 
-const calculateBalanceSolidityStorageSlot = (holderAddress: string, slotNumber: number) => {
-  const slotHash = ethers.utils.solidityKeccak256(
-    ["uint256", "uint256"],
-    [holderAddress, slotNumber]
+const calculateBalanceSolidityStorageSlot = (holderAddress: Address, slotNumber: number) => {
+  const slotHash = keccak256(
+    encodePacked(
+      ["uint256", "uint256"],
+      [BigInt(holderAddress), BigInt(slotNumber)]
+    )
   );
   return { slotHash }
 }
 
-const calculateBalanceVyperStorageSlot = (holderAddress: string, slotNumber: number) => {
+const calculateBalanceVyperStorageSlot = (holderAddress: Address, slotNumber: number) => {
   // create hash via vyper storage layout, which uses keccak256(abi.encode(slot, address(this))) instead of keccak256(abi.encode(address(this), slot))
-  const vyperSlotHash = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["uint256", "address"],
-      [slotNumber, holderAddress]
+  const vyperSlotHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }],
+      [BigInt(slotNumber), holderAddress]
     )
   );
   return { vyperSlotHash }
@@ -195,22 +213,22 @@ const calculateBalanceVyperStorageSlot = (holderAddress: string, slotNumber: num
 
 /**
  * Get the balance of a given address for a given ERC20 token
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param address - The address of the ERC20 token
  * @param addressToCheck - The address to check the balance of
  * @returns The balance of the address
  *
  */
 export const getErc20Balance = async (
-  provider: ethers.providers.JsonRpcProvider,
-  address: string,
-  addressToCheck: string
-): Promise<ethers.BigNumber> => {
-  const contract = new ethers.Contract(
+  client: ViemPublicClient,
+  address: Address,
+  addressToCheck: Address
+): Promise<bigint> => {
+  const balance = await client.readContract({
     address,
-    ["function balanceOf(address owner) view returns (uint256)"],
-    provider
-  );
-  const balance = await contract.balanceOf(addressToCheck);
+    abi: [parseAbiItem('function balanceOf(address owner) view returns (uint256)')],
+    functionName: 'balanceOf',
+    args: [addressToCheck]
+  });
   return balance;
 };

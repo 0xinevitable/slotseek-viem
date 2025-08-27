@@ -1,9 +1,20 @@
-import { ethers } from "ethers";
+import { 
+  type Address, 
+  type PublicClient, 
+  type Hex,
+  encodeAbiParameters,
+  keccak256,
+  parseAbiItem,
+  toHex,
+  pad,
+  hexToBigInt
+} from "viem";
 import { approvalCache } from "./cache";
+import type { ViemPublicClient } from "./types";
 
 /**
  * Generate mock approval data for a given ERC20 token
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param tokenAddress - The address of the ERC20 token
  * @param ownerAddress - The address of the owner
  * @param spenderAddress - The address of the spender
@@ -14,7 +25,7 @@ import { approvalCache } from "./cache";
  *
  */
 export const generateMockApprovalData = async (
-  provider: ethers.providers.JsonRpcProvider,
+  client: ViemPublicClient,
   {
     tokenAddress,
     ownerAddress,
@@ -24,22 +35,22 @@ export const generateMockApprovalData = async (
     maxSlots = 30,
     useFallbackSlot = false
   }: {
-    tokenAddress: string;
-    ownerAddress: string;
-    spenderAddress: string;
-    mockAddress: string;
+    tokenAddress: Address;
+    ownerAddress: Address;
+    spenderAddress: Address;
+    mockAddress: Address;
     mockApprovalAmount: string;
     maxSlots?: number;
     useFallbackSlot?: boolean;
   }
 ): Promise<{
-  slot: string;
-  approval: string;
+  slot: Hex;
+  approval: Hex;
   isVyper: boolean;
 }> => {
   // get the slot for the approval mapping, mapping(address account => mapping(address spender => uint256))
   const { slot, isVyper } = await getErc20ApprovalStorageSlot(
-    provider,
+    client,
     tokenAddress,
     ownerAddress,
     spenderAddress,
@@ -49,37 +60,37 @@ export const generateMockApprovalData = async (
   );
 
   // make sure its padded to 32 bytes, and convert to a BigNumber
-  const mockApprovalHex = ethers.utils.hexZeroPad(
-    ethers.utils.hexlify(ethers.BigNumber.from(mockApprovalAmount)),
-    32
+  const mockApprovalHex = pad(
+    toHex(BigInt(mockApprovalAmount)),
+    { size: 32 }
   );
 
-  let index;
+  let index: Hex;
   if (!isVyper) {
-    const newSlotHash = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["address", "uint256"],
-        [mockAddress, slot]
+    const newSlotHash = keccak256(
+      encodeAbiParameters(
+        [{ type: "address" }, { type: "uint256" }],
+        [mockAddress, hexToBigInt(slot)]
       )
     );
     // Calculate the storage slot key
-    index = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["address", "bytes32"],
+    index = keccak256(
+      encodeAbiParameters(
+        [{ type: "address" }, { type: "bytes32" }],
         [spenderAddress, newSlotHash]
       )
     );
   } else {
-    const newSlotHash = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["uint256", "address"],
-        [slot, mockAddress]
+    const newSlotHash = keccak256(
+      encodeAbiParameters(
+        [{ type: "uint256" }, { type: "address" }],
+        [hexToBigInt(slot), mockAddress]
       )
     );
     // Calculate the storage slot key
-    index = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["bytes32", "address"],
+    index = keccak256(
+      encodeAbiParameters(
+        [{ type: "bytes32" }, { type: "address" }],
         [newSlotHash, spenderAddress]
       )
     );
@@ -94,7 +105,7 @@ export const generateMockApprovalData = async (
 
 /**
  * Get the storage slot for a given ERC20 token approval
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param erc20Address - The address of the ERC20 token
  * @param ownerAddress - The address of the owner, used to find the approval slot
  * @param spenderAddress - The address of the spender, used to find the approval slot
@@ -104,15 +115,15 @@ export const generateMockApprovalData = async (
  * - This uses a brute force approach similar to the balance slot search. See the balance slot search comment for more details.
  */
 export const getErc20ApprovalStorageSlot = async (
-  provider: ethers.providers.JsonRpcProvider,
-  erc20Address: string,
-  ownerAddress: string,
-  spenderAddress: string,
+  client: ViemPublicClient,
+  erc20Address: Address,
+  ownerAddress: Address,
+  spenderAddress: Address,
   maxSlots: number,
   useFallbackSlot = false
 ): Promise<{
-  slot: string;
-  slotHash: string;
+  slot: Hex;
+  slotHash: Hex;
   isVyper: boolean;
 }> => {
   // check the cache
@@ -121,7 +132,7 @@ export const getErc20ApprovalStorageSlot = async (
     if (cachedValue.isVyper) {
       const { vyperSlotHash } = calculateApprovalVyperStorageSlot(ownerAddress, spenderAddress, cachedValue.slot)
       return {
-        slot: ethers.BigNumber.from(cachedValue.slot).toHexString(),
+        slot: toHex(cachedValue.slot),
         slotHash: vyperSlotHash,
         isVyper: true,
       };
@@ -129,7 +140,7 @@ export const getErc20ApprovalStorageSlot = async (
     } else {
       const { slotHash } = calculateApprovalSolidityStorageSlot(ownerAddress, spenderAddress, cachedValue.slot)
       return {
-        slot: ethers.BigNumber.from(cachedValue.slot).toHexString(),
+        slot: toHex(cachedValue.slot),
         slotHash: slotHash,
         isVyper: false,
       }
@@ -138,38 +149,41 @@ export const getErc20ApprovalStorageSlot = async (
 
   // Get the approval for the spender, that we can use to find the slot
   let approval = await getErc20Approval(
-    provider,
+    client,
     erc20Address,
     ownerAddress,
     spenderAddress
   );
 
-  if (approval.gt(0)) {
+  if (approval > 0n) {
     for (let i = 0; i < maxSlots; i++) {
       const { storageSlot, slotHash } = calculateApprovalSolidityStorageSlot(ownerAddress, spenderAddress, i)
       // Get the value at the storage slot
-      const storageValue = await provider.getStorageAt(erc20Address, storageSlot);
+      const storageValue = await client.getStorageAt({
+        address: erc20Address,
+        slot: storageSlot
+      });
       // If the value at the storage slot is equal to the approval, return the slot as we have found the correct slot for approvals
-      if (ethers.BigNumber.from(storageValue).eq(approval)) {
+      if (hexToBigInt(storageValue!) === approval) {
         approvalCache.set(erc20Address.toLowerCase(), {
           slot: i,
           isVyper: false,
           ts: Date.now()
         });
         return {
-          slot: ethers.BigNumber.from(i).toHexString(),
+          slot: toHex(i),
           slotHash: slotHash,
           isVyper: false,
         };
       }
 
       const { vyperStorageSlot, vyperSlotHash } = calculateApprovalVyperStorageSlot(ownerAddress, spenderAddress, i)
-      const vyperStorageValue = await provider.getStorageAt(
-        erc20Address,
-        vyperStorageSlot
-      );
+      const vyperStorageValue = await client.getStorageAt({
+        address: erc20Address,
+        slot: vyperStorageSlot
+      });
 
-      if (ethers.BigNumber.from(vyperStorageValue).eq(approval)) {
+      if (hexToBigInt(vyperStorageValue!) === approval) {
         approvalCache.set(erc20Address.toLowerCase(), {
           slot: i,
           isVyper: false,
@@ -177,7 +191,7 @@ export const getErc20ApprovalStorageSlot = async (
         });
 
         return {
-          slot: ethers.BigNumber.from(i).toHexString(),
+          slot: toHex(i),
           slotHash: vyperSlotHash,
           isVyper: true,
         };
@@ -195,9 +209,12 @@ export const getErc20ApprovalStorageSlot = async (
     // (dont have an easy way to check if a contract is solidity/vyper)
     const { storageSlot, slotHash } = calculateApprovalSolidityStorageSlot(ownerAddress, spenderAddress, fallbackSlot)
     // Get the value at the storage slot
-    const storageValue = await provider.getStorageAt(erc20Address, storageSlot);
+    const storageValue = await client.getStorageAt({
+      address: erc20Address,
+      slot: storageSlot
+    });
     // If the value at the storage slot is equal to the approval, return the slot as we have found the correct slot for approvals
-    if (ethers.BigNumber.from(storageValue).eq(approval)) {
+    if (hexToBigInt(storageValue!) === approval) {
       approvalCache.set(erc20Address.toLowerCase(), {
         slot: fallbackSlot,
         isVyper: false,
@@ -205,7 +222,7 @@ export const getErc20ApprovalStorageSlot = async (
       });
 
       return {
-        slot: ethers.BigNumber.from(fallbackSlot).toHexString(),
+        slot: toHex(fallbackSlot),
         slotHash: slotHash,
         isVyper: false,
       };
@@ -213,11 +230,11 @@ export const getErc20ApprovalStorageSlot = async (
 
     // check vyper
     const { vyperStorageSlot, vyperSlotHash } = calculateApprovalVyperStorageSlot(ownerAddress, spenderAddress, fallbackSlot)
-    const vyperStorageValue = await provider.getStorageAt(
-      erc20Address,
-      vyperStorageSlot
-    );
-    if (ethers.BigNumber.from(vyperStorageValue).eq(approval)) {
+    const vyperStorageValue = await client.getStorageAt({
+      address: erc20Address,
+      slot: vyperStorageSlot
+    });
+    if (hexToBigInt(vyperStorageValue!) === approval) {
       approvalCache.set(erc20Address.toLowerCase(), {
         slot: fallbackSlot,
         isVyper: true,
@@ -225,7 +242,7 @@ export const getErc20ApprovalStorageSlot = async (
       });
 
       return {
-        slot: ethers.BigNumber.from(fallbackSlot).toHexString(),
+        slot: toHex(fallbackSlot),
         slotHash: vyperSlotHash,
         isVyper: true,
       };
@@ -236,19 +253,19 @@ export const getErc20ApprovalStorageSlot = async (
 };
 
 // Generates approval solidity storage slot data
-const calculateApprovalSolidityStorageSlot = (ownerAddress: string, spenderAddress: string, slotNumber: number) => {
+const calculateApprovalSolidityStorageSlot = (ownerAddress: Address, spenderAddress: Address, slotNumber: number) => {
 
   // Calculate the slot hash, using the owner address and the slot index
-  const slotHash = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["address", "uint256"],
-      [ownerAddress, slotNumber]
+  const slotHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }],
+      [ownerAddress, BigInt(slotNumber)]
     )
   );
   // Calculate the storage slot, using the spender address and the slot hash
-  const storageSlot = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["address", "bytes32"],
+  const storageSlot = keccak256(
+    encodeAbiParameters(
+      [{ type: "address" }, { type: "bytes32" }],
       [spenderAddress, slotHash]
     )
   );
@@ -256,18 +273,18 @@ const calculateApprovalSolidityStorageSlot = (ownerAddress: string, spenderAddre
 }
 
 // Generates approval vyper storage slot data
-const calculateApprovalVyperStorageSlot = (ownerAddress: string, spenderAddress: string, slotNumber: number) => {
+const calculateApprovalVyperStorageSlot = (ownerAddress: Address, spenderAddress: Address, slotNumber: number) => {
   // create via vyper storage layout, which uses keccak256(abi.encode(slot, address(this))) instead of keccak256(abi.encode(address(this), slot))
-  const vyperSlotHash = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["uint256", "address"],
-      [slotNumber, ownerAddress]
+  const vyperSlotHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }],
+      [BigInt(slotNumber), ownerAddress]
     )
   );
 
-  const vyperStorageSlot = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["bytes32", "address"],
+  const vyperStorageSlot = keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "address" }],
       [vyperSlotHash, spenderAddress]
     )
   );
@@ -276,25 +293,23 @@ const calculateApprovalVyperStorageSlot = (ownerAddress: string, spenderAddress:
 }
 /**
  * Get the approval for a given ERC20 token
- * @param provider - The JsonRpcProvider instance
+ * @param client - The viem PublicClient instance
  * @param address - The address of the ERC20 token
  * @param ownerAddress - The address of the owner
  * @param spenderAddress - The address of the spender
  * @returns The approval amount
  */
 export const getErc20Approval = async (
-  provider: ethers.providers.JsonRpcProvider,
-  address: string,
-  ownerAddress: string,
-  spenderAddress: string
-): Promise<ethers.BigNumber> => {
-  const contract = new ethers.Contract(
+  client: ViemPublicClient,
+  address: Address,
+  ownerAddress: Address,
+  spenderAddress: Address
+): Promise<bigint> => {
+  const approval = await client.readContract({
     address,
-    [
-      "function allowance(address owner, address spender) view returns (uint256)",
-    ],
-    provider
-  );
-  const approval = await contract.allowance(ownerAddress, spenderAddress);
+    abi: [parseAbiItem('function allowance(address owner, address spender) view returns (uint256)')],
+    functionName: 'allowance',
+    args: [ownerAddress, spenderAddress]
+  });
   return approval;
 };

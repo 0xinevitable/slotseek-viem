@@ -8,4 +8,6 @@ export interface CacheData {
 }
 export type CacheMapType = Map<string, CacheData>;
 
+export type ViemPublicClient = any; // Allow any client type for flexibility
+
 

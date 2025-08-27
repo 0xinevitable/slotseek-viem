@@ -1,10 +1,12 @@
-# slotseek
+# slotseek-viem
 
-<a href="https://www.npmjs.com/package/@d3or/slotseek/"><img src="https://img.shields.io/npm/v/@d3or/slotseek.svg" alt="NPM version"></a>
+<a href="https://www.npmjs.com/package/@d3or/slotseek-viem/"><img src="https://img.shields.io/npm/v/@d3or/slotseek-viem.svg" alt="NPM version"></a>
 <a href="https://twitter.com/intent/follow?screen_name=deor"><img src="https://img.shields.io/twitter/follow/deor.svg?style=social&label=Follow%20@deor" alt="Follow on Twitter" /></a>
 <a href="https://github.com/d3or/slotseek/actions/workflows/test.yml"><img src="https://github.com/d3or/slotseek/actions/workflows/test.yml/badge.svg" alt="Build Status" /></a>
 
-slotseek is a javascript library that assists with finding the storage slots for the `balanceOf` and `allowance` mappings in an ERC20 token contract, and the permit2 allowance mapping. It also provides a way to generate mock data that can be used to override the state of a contract in an `eth_call` or `eth_estimateGas` call.
+slotseek-viem is a JavaScript library for viem that assists with finding the storage slots for the `balanceOf` and `allowance` mappings in an ERC20 token contract, and the permit2 allowance mapping. It also provides a way to generate mock data that can be used to override the state of a contract in an `eth_call` or `eth_estimateGas` call.
+
+This is a port of the original [slotseek](https://github.com/d3or/slotseek) library from ethers.js to viem.
 
 The main use case for this library is to estimate gas costs of transactions that would fail if the address did not have the required balance or approval.
 
@@ -15,6 +17,7 @@ For example, estimating the gas a transaction will consume when swapping, before
 - Find storage slots for `balanceOf` and `allowance` mappings in an ERC20 token contract, and permit2 allowance mapping
 - Generates mock data that can be used to override the state of a contract in an `eth_call`/`eth_estimateGas` call
 - Supports [vyper storage layouts](https://docs.vyperlang.org/en/stable/scoping-and-declarations.html#storage-layout)
+- Built for viem with full TypeScript support
 
 ## How it works
 
@@ -25,9 +28,9 @@ This is not a perfect method, and there are more efficient ways to find the stor
 ## Installation
 
 ```bash
-npm install @d3or/slotseek
+npm install @d3or/slotseek-viem
 # or
-yarn add @d3or/slotseek
+yarn add @d3or/slotseek-viem
 ```
 
 ## TODO
@@ -37,21 +40,25 @@ yarn add @d3or/slotseek
 ## Example of overriding a users balance via eth_call
 
 ```javascript
-import { ethers } from "ethers";
-import { generateMockBalanceData } from "@d3or/slotseek";
+import { createPublicClient, http, parsePrivateKey, privateKeyToAddress, getAddress } from "viem";
+import { base } from "viem/chains";
+import { generateMockBalanceData } from "@d3or/slotseek-viem";
 
 async function fakeUserBalance() {
   // Setup - Base RPC
-  const provider = new ethers.providers.JsonRpcProvider("YOUR_RPC_URL");
+  const client = createPublicClient({
+    chain: base,
+    transport: http("YOUR_RPC_URL")
+  });
 
   // Constants
   const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // USDC on Base
   const holderAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000"; // USDC holder
-  const mockAddress = ethers.Wallet.createRandom().address; // Address to fake balance for
+  const mockAddress = privateKeyToAddress(parsePrivateKey("0x..." /* generate random */)); // Address to fake balance for
   const mockBalanceAmount = "1000000000000"; // 1 million USDC (6 decimal places), optional. If not provided, defaults to the balance of the holder
 
   // Generate mock balance data
-  const data = await generateMockBalanceData(provider, {
+  const data = await generateMockBalanceData(client, {
     tokenAddress,
     holderAddress,
     mockAddress,
@@ -67,34 +74,33 @@ async function fakeUserBalance() {
     },
   };
 
-  // Prepare balanceOf call
-  const balanceOfSelector = "0x70a08231";
-  const encodedAddress = ethers.utils.defaultAbiCoder
-    .encode(["address"], [mockAddress])
-    .slice(2);
-  const getBalanceCalldata = balanceOfSelector + encodedAddress;
-
   // Make the eth_call with state overrides, or eth_estimateGas
-  const balanceOfResponse = await provider.send("eth_call", [
-    {
-      from: mockAddress,
-      to: tokenAddress,
-      data: getBalanceCalldata,
-    },
-    "latest",
-    stateDiff,
-  ]);
+  const balanceOfResponse = await client.request({
+    method: 'eth_call',
+    params: [
+      {
+        from: mockAddress,
+        to: tokenAddress,
+        data: encodeFunctionData({
+          abi: [parseAbiItem('function balanceOf(address) view returns (uint256)')],
+          functionName: 'balanceOf',
+          args: [mockAddress]
+        }),
+      },
+      "latest",
+      stateDiff,
+    ],
+  });
 
   // Decode and log the result
-  const balance = ethers.BigNumber.from(
-    ethers.utils.defaultAbiCoder.decode(["uint256"], balanceOfResponse)[0]
-  );
+  const balance = decodeFunctionResult({
+    abi: [parseAbiItem('function balanceOf(address) view returns (uint256)')],
+    functionName: 'balanceOf',
+    data: balanceOfResponse
+  });
 
   console.log(
-    `Mocked balance for ${mockAddress}: ${ethers.utils.formatUnits(
-      balance,
-      6
-    )} USDC`
+    `Mocked balance for ${mockAddress}: ${formatUnits(balance, 6)} USDC`
   );
 }
 
@@ -104,22 +110,26 @@ fakeUserBalance().catch(console.error);
 This can also be used to fake approvals, by using the `generateMockApprovalData` function instead of `generateMockBalanceData`.
 
 ```javascript
-import { ethers } from "ethers";
-import { generateMockApprovalData } from "@d3or/slotseek";
+import { createPublicClient, http, parsePrivateKey, privateKeyToAddress } from "viem";
+import { base } from "viem/chains";
+import { generateMockApprovalData } from "@d3or/slotseek-viem";
 
 async function fakeUserApproval() {
   // Setup
-  const provider = new ethers.providers.JsonRpcProvider("YOUR_RPC_URL");
+  const client = createPublicClient({
+    chain: base,
+    transport: http("YOUR_RPC_URL")
+  });
 
   // Constants
   const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // USDC on Base
   const ownerAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000"; // USDC holder
   const spenderAddress = "0x000000000022D473030F116dDEE9F6B43aC78BA3"; // Spender address
-  const mockAddress = ethers.Wallet.createRandom().address; // Address to fake balance for
+  const mockAddress = privateKeyToAddress(parsePrivateKey("0x..." /* generate random */)); // Address to fake balance for
   const mockApprovalAmount = "1000000000000"; // 1 million USDC (6 decimal places)
 
   // Generate mock approval data
-  const mockApprovalData = await generateMockApprovalData(provider, {
+  const mockApprovalData = await generateMockApprovalData(client, {
     tokenAddress,
     ownerAddress,
     spenderAddress,
@@ -136,35 +146,33 @@ async function fakeUserApproval() {
     },
   };
 
-  // Function selector for allowance(address,address)
-  const allowanceSelector = "0xdd62ed3e";
-  // Encode the owner and spender addresses
-  const encodedAddresses = ethers.utils.defaultAbiCoder
-    .encode(["address", "address"], [mockAddress, spenderAddress])
-    .slice(2);
-  const getAllowanceCalldata = allowanceSelector + encodedAddresses;
-
   // Make the eth_call with state overrides, or eth_estimateGas
-  const allowanceResponse = await provider.send("eth_call", [
-    {
-      from: mockAddress,
-      to: tokenAddress,
-      data: getAllowanceCalldata,
-    },
-    "latest",
-    stateDiff,
-  ]);
+  const allowanceResponse = await client.request({
+    method: 'eth_call',
+    params: [
+      {
+        from: mockAddress,
+        to: tokenAddress,
+        data: encodeFunctionData({
+          abi: [parseAbiItem('function allowance(address,address) view returns (uint256)')],
+          functionName: 'allowance',
+          args: [mockAddress, spenderAddress]
+        }),
+      },
+      "latest",
+      stateDiff,
+    ],
+  });
 
   // Decode and log the result
-  const allowance = ethers.BigNumber.from(
-    ethers.utils.defaultAbiCoder.decode(["uint256"], allowanceResponse)[0]
-  );
+  const allowance = decodeFunctionResult({
+    abi: [parseAbiItem('function allowance(address,address) view returns (uint256)')],
+    functionName: 'allowance',
+    data: allowanceResponse
+  });
 
   console.log(
-    `Mocked allowance for ${mockAddress}: ${ethers.utils.formatUnits(
-      allowance,
-      6
-    )} USDC`
+    `Mocked allowance for ${mockAddress}: ${formatUnits(allowance, 6)} USDC`
   );
 }
 
@@ -176,34 +184,33 @@ You can also override both the balance and the allowance at the same time by pro
 ## Example of just finding the storage slot in a contract
 
 ```javascript
-import { ethers } from "ethers";
-import { getErc20BalanceStorageSlot } from "@d3or/slotseek";
+import { createPublicClient, http } from "viem";
+import { base } from "viem/chains";
+import { getErc20BalanceStorageSlot } from "@d3or/slotseek-viem";
 
 async function findStorageSlot() {
   // Setup - Base RPC
-  const provider = new ethers.providers.JsonRpcProvider(
-    "https://mainnet.base.org"
-  );
+  const client = createPublicClient({
+    chain: base,
+    transport: http("https://mainnet.base.org")
+  });
 
   // Constants
   const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // USDC on Base
   const holderAddress = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000"; // USDC holder
   const maxSlots = 100; // Max slots to search
 
-  // Find the storage slot for the balance of the holde
+  // Find the storage slot for the balance of the holder
   // or for approvals, use getErc20AllowanceStorageSlot
   const { slot, balance, isVyper } = await getErc20BalanceStorageSlot(
-    provider,
+    client,
     tokenAddress,
     holderAddress,
     maxSlots
   );
 
   console.log(
-    `User has balance of ${ethers.utils.formatUnits(
-      balance,
-      6
-    )} USDC stored at slot #${Number(slot)}`
+    `User has balance of ${formatUnits(balance, 6)} USDC stored at slot #${Number(slot)}`
   );
 }
 
@@ -213,14 +220,16 @@ findStorageSlot().catch(console.error);
 ## Example of mocking the permit2 allowance mapping 
 
 ```javascript
-import { ethers } from "ethers";
-import { computePermit2AllowanceStorageSlot } from "@d3or/slotseek";
+import { createPublicClient, http, pad, toHex } from "viem";
+import { base } from "viem/chains";
+import { computePermit2AllowanceStorageSlot } from "@d3or/slotseek-viem";
 
 async function findStorageSlot() {
   // Setup - Base RPC
-  const provider = new ethers.providers.JsonRpcProvider(
-    "https://mainnet.base.org"
-  );
+  const client = createPublicClient({
+    chain: base,
+    transport: http("https://mainnet.base.org")
+  });
 
   // Constants
   const tokenAddress = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // USDC on Base
@@ -236,49 +245,43 @@ async function findStorageSlot() {
   const stateDiff = {
     [permit2Contract]: {
       stateDiff: {
-        [slot]: ethers.utils.hexZeroPad(
-          ethers.utils.hexlify(ethers.BigNumber.from("1461501637330902918203684832716283019655932142975")),
-          32
+        [slot]: pad(
+          toHex(BigInt("1461501637330902918203684832716283019655932142975")),
+          { size: 32 }
         )
-        ,
       },
     },
   };
 
   // Function selector for allowance(address,address,address)
-  const allowanceSelector = "0x927da105";
-  // Encode the owner and spender addresses
-  const encodedAddresses = ethers.utils.defaultAbiCoder
-    .encode(["address", "address", "address"], [mockAddress, tokenAddress, spenderAddress])
-    .slice(2);
-  const getAllowanceCalldata = allowanceSelector + encodedAddresses;
+  const allowanceCalldata = encodeFunctionData({
+    abi: [parseAbiItem('function allowance(address,address,address) view returns (uint256)')],
+    functionName: 'allowance',
+    args: [mockAddress, tokenAddress, spenderAddress]
+  });
 
-
-  const callParams = [
-    {
-      to: permit2Contract,
-      data: getAllowanceCalldata,
-    },
-    "latest",
-  ];
-
-  const allowanceResponse = await baseProvider.send("eth_call", [
-    ...callParams,
-    stateDiff,
-  ]);
+  const allowanceResponse = await client.request({
+    method: 'eth_call',
+    params: [
+      {
+        to: permit2Contract,
+        data: allowanceCalldata,
+      },
+      "latest",
+      stateDiff
+    ],
+  });
 
   // convert the response to a BigNumber
-  const approvalAmount = ethers.BigNumber.from(
-    ethers.utils.defaultAbiCoder.decode(["uint256"], allowanceResponse)[0]
-  );
+  const approvalAmount = decodeFunctionResult({
+    abi: [parseAbiItem('function allowance(address,address,address) view returns (uint256)')],
+    functionName: 'allowance',
+    data: allowanceResponse
+  });
 
   console.log(
-    `Mocked balance for ${mockAddress}: ${ethers.utils.formatUnits(
-      approvalAmount,
-      6
-    )} USDC`
+    `Mocked balance for ${mockAddress}: ${formatUnits(approvalAmount, 6)} USDC`
   );
-
 }
 findStorageSlot().catch(console.error);
 ```
