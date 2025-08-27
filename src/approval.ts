@@ -132,7 +132,7 @@ export const getErc20ApprovalStorageSlot = async (
     if (cachedValue.isVyper) {
       const { vyperSlotHash } = calculateApprovalVyperStorageSlot(ownerAddress, spenderAddress, cachedValue.slot)
       return {
-        slot: toHex(cachedValue.slot),
+        slot: `0x${cachedValue.slot.toString(16).padStart(2, '0')}`,
         slotHash: vyperSlotHash,
         isVyper: true,
       };
@@ -140,7 +140,7 @@ export const getErc20ApprovalStorageSlot = async (
     } else {
       const { slotHash } = calculateApprovalSolidityStorageSlot(ownerAddress, spenderAddress, cachedValue.slot)
       return {
-        slot: toHex(cachedValue.slot),
+        slot: `0x${cachedValue.slot.toString(16).padStart(2, '0')}`,
         slotHash: slotHash,
         isVyper: false,
       }
@@ -171,7 +171,7 @@ export const getErc20ApprovalStorageSlot = async (
           ts: Date.now()
         });
         return {
-          slot: toHex(i),
+          slot: `0x${i.toString(16).padStart(2, '0')}`,
           slotHash: slotHash,
           isVyper: false,
         };
@@ -191,7 +191,7 @@ export const getErc20ApprovalStorageSlot = async (
         });
 
         return {
-          slot: toHex(i),
+          slot: `0x${i.toString(16).padStart(2, '0')}`,
           slotHash: vyperSlotHash,
           isVyper: true,
         };
@@ -222,7 +222,7 @@ export const getErc20ApprovalStorageSlot = async (
       });
 
       return {
-        slot: toHex(fallbackSlot),
+        slot: `0x${fallbackSlot.toString(16).padStart(2, '0')}`,
         slotHash: slotHash,
         isVyper: false,
       };
@@ -242,7 +242,7 @@ export const getErc20ApprovalStorageSlot = async (
       });
 
       return {
-        slot: toHex(fallbackSlot),
+        slot: `0x${fallbackSlot.toString(16).padStart(2, '0')}`,
         slotHash: vyperSlotHash,
         isVyper: true,
       };

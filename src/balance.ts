@@ -114,7 +114,7 @@ export const getErc20BalanceStorageSlot = async (
         slot: vyperSlotHash
       });
       return {
-        slot: toHex(cachedValue.slot),
+        slot: `0x${cachedValue.slot.toString(16).padStart(2, '0')}`,
         balance: hexToBigInt(vyperBalance!),
         isVyper: true,
       };
@@ -125,7 +125,7 @@ export const getErc20BalanceStorageSlot = async (
         slot: slotHash
       });
       return {
-        slot: toHex(cachedValue.slot),
+        slot: `0x${cachedValue.slot.toString(16).padStart(2, '0')}`,
         balance: hexToBigInt(balance!),
         isVyper: false,
       }
@@ -160,7 +160,7 @@ export const getErc20BalanceStorageSlot = async (
       })
 
       return {
-        slot: toHex(i),
+        slot: `0x${i.toString(16).padStart(2, '0')}`,
         balance: hexToBigInt(balance!),
         isVyper: false,
       };
@@ -180,7 +180,7 @@ export const getErc20BalanceStorageSlot = async (
       })
 
       return {
-        slot: toHex(i),
+        slot: `0x${i.toString(16).padStart(2, '0')}`,
         balance: hexToBigInt(vyperBalance!),
         isVyper: true,
       };

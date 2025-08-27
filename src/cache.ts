@@ -72,4 +72,12 @@ const getObjectSize = (obj: any) => {
   }
 }
 
-setInterval(clearCacheJob, CACHE_INTERVAL);
+const cacheInterval = setInterval(() => {
+  clearCacheJob('balance');
+  clearCacheJob('approval');
+}, CACHE_INTERVAL);
+
+// Allow the interval to be cleared for testing
+if (typeof cacheInterval.unref === 'function') {
+  cacheInterval.unref();
+}

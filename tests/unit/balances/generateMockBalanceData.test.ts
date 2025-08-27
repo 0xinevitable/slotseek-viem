@@ -1,5 +1,5 @@
 import { generateMockBalanceData } from "../../../src";
-import { createPublicClient, http, type Address, generatePrivateKey, privateKeyToAddress } from "viem";
+import { createPublicClient, http, type Address, getAddress } from "viem";
 import { base, mainnet } from "viem/chains";
 
 describe("generateMockBalanceData", () => {
@@ -35,7 +35,7 @@ describe("generateMockBalanceData", () => {
   it("[vyper] should generate mock balance data", async () => {
     const tokenAddress: Address = "0xD533a949740bb3306d119CC777fa900bA034cd52";
     const holderAddress: Address = "0x0000c3Caa36E2d9A8CD5269C976eDe05018f0000";
-    const mockAddress: Address = privateKeyToAddress(generatePrivateKey());
+    const mockAddress: Address = getAddress(`0x${Math.random().toString(16).slice(2, 42).padEnd(40, '0')}`);
     const mockBalanceAmount = "1000000";
     const maxSlots = 30;
 
